@@ -1,5 +1,5 @@
 
-name: Build Advanced Khata APK
+name: Build Advanced Khata APK - Fix
 
 on:
   workflow_dispatch:
@@ -12,33 +12,53 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Find and extract ZIP
+      - name: Extract project ZIP
         run: |
-          sudo apt-get update
-          sudo apt-get install -y unzip
           ZIP_FILE=$(find . -maxdepth 1 -type f -iname "*.zip" | head -n 1)
           if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: Project ZIP not found"
+            echo "Project ZIP missing"
             exit 1
           fi
           mkdir -p unpacked
           unzip -q "$ZIP_FILE" -d unpacked
           PROJECT_DIR=$(find unpacked -type f -name package.json -printf '%h\n' | head -n 1)
           if [ -z "$PROJECT_DIR" ]; then
-            echo "ERROR: package.json not found"
+            echo "package.json missing"
             exit 1
           fi
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-      - name: Setup Node.js
+      - name: Apply Android compatibility fix
+        run: |
+          cd "$PROJECT_DIR"
+
+          node <<'NODE'
+          const fs = require('fs');
+          const p = JSON.parse(fs.readFileSync('app.json', 'utf8'));
+          p.expo.android = p.expo.android || {};
+          p.expo.android.jsEngine = 'jsc';
+          p.expo.android.newArchEnabled = false;
+          p.expo.android.versionCode =
+            Math.max(1, p.expo.android.versionCode || 1) + 1;
+          fs.writeFileSync('app.json', JSON.stringify(p, null, 2));
+          NODE
+
+          cat > metro.config.js <<'EOF'
+          const { getDefaultConfig } = require('expo/metro-config');
+          const config = getDefaultConfig(__dirname);
+          config.resolver.unstable_enablePackageExports = false;
+          module.exports = config;
+          EOF
+
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Install dependencies
+      - name: Install packages
         run: |
           cd "$PROJECT_DIR"
           npm install
@@ -54,21 +74,21 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Generate Android project
+      - name: Generate Android
         run: |
           cd "$PROJECT_DIR"
           npx expo prebuild --platform android --non-interactive
 
-      - name: Build APK
+      - name: Build Release APK
         run: |
           cd "$PROJECT_DIR/android"
           chmod +x gradlew
           ./gradlew assembleRelease
 
-      - name: Upload APK
+      - name: Upload Fixed APK
         uses: actions/upload-artifact@v4
         with:
-          name: Advanced-Khata-APK
+          name: Advanced-Khata-Fixed-APK
           path: unpacked/**/android/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
           retention-days: 30
